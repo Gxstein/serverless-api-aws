@@ -1,0 +1,21 @@
+# SAM
+.aws-sam/
+samconfig.local.toml
+packaged.yaml
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# k6 results
+loadtest/*.json
+loadtest/*.html
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  serverless-api-aws: expenses REST API on AWS Lambda + API Gateway (HTTP API) + DynamoDB,
+  with a static frontend on a private S3 bucket served by CloudFront.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: API Gateway stage name
+  AlarmEmail:
+    Type: String
+    Description: E-mail that receives CloudWatch alarm notifications
+    AllowedPattern: "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+  AllowedOrigin:
+    Type: String
+    Default: "*"
+    Description: CORS origin allowed to call the API (set to the CloudFront URL after the first deploy)
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures: [arm64] # Graviton: about 20% cheaper per GB-second than x86
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active # AWS X-Ray
+    LoggingConfig:
+      LogFormat: JSON
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref ExpensesTable
+
+Resources:
+  # ---------- Data ----------
+
+  ExpensesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      TableName: !Sub "${AWS::StackName}-expenses"
+      BillingMode: PAY_PER_REQUEST # on-demand: pay per request, scales automatically
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # ---------- API ----------
+
+  ExpensesApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref AllowedOrigin
+        AllowMethods: [GET, POST, DELETE, OPTIONS]
+        AllowHeaders: [Content-Type]
+        MaxAge: 600
+      # Protects the account (and the bill) against abuse
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+        DetailedMetricsEnabled: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogs.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","route":"$context.routeKey","status":"$context.status","latencyMs":"$context.responseLatency","integrationLatencyMs":"$context.integrationLatency","error":"$context.integrationErrorMessage"}'
+
+  ApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-access"
+      RetentionInDays: 14
+
+  ExpensesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-expenses"
+      Description: CRUD and summary of personal expenses
+      CodeUri: src/expenses/
+      Handler: app.handler
+      # Least privilege: CRUD on this single table only
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ExpensesTable
+      Events:
+        ListExpenses:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ExpensesApi
+            Path: /expenses
+            Method: GET
+        CreateExpense:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ExpensesApi
+            Path: /expenses
+            Method: POST
+        GetSummary:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ExpensesApi
+            Path: /expenses/summary
+            Method: GET
+        GetExpense:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ExpensesApi
+            Path: /expenses/{id}
+            Method: GET
+        DeleteExpense:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref ExpensesApi
+            Path: /expenses/{id}
+            Method: DELETE
+
+  ExpensesFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ExpensesFunction}"
+      RetentionInDays: 14
+
+Outputs:
+  ApiUrl:
+    Description: Base URL of the HTTP API
+    Value: !Sub "https://${ExpensesApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+  FunctionName:
+    Description: Lambda function name
+    Value: !Ref ExpensesFunction
+  TableName:
+    Description: DynamoDB table name
+    Value: !Ref ExpensesTable
