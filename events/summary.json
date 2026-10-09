@@ -1,0 +1,6 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /expenses/summary",
+  "rawPath": "/dev/expenses/summary",
+  "isBase64Encoded": false
+}

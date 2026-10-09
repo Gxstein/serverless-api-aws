@@ -1,0 +1,7 @@
+{
+  "version": "2.0",
+  "routeKey": "GET /expenses",
+  "rawPath": "/dev/expenses",
+  "queryStringParameters": { "category": "alimentacao" },
+  "isBase64Encoded": false
+}

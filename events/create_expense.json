@@ -1,0 +1,8 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /expenses",
+  "rawPath": "/dev/expenses",
+  "headers": { "content-type": "application/json" },
+  "body": "{\"description\": \"Almoço\", \"amount\": 32.9, \"category\": \"alimentacao\", \"date\": \"2026-10-05\"}",
+  "isBase64Encoded": false
+}
