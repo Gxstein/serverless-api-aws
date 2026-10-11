@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: tests/requirements.txt
+
+      - run: pip install -r tests/requirements.txt
+
+      - run: pytest -v
+
+  validate:
+    name: validate templates
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: sam validate (SAM + cfn-lint)
+        run: sam validate --lint
+
+      - name: cfn-lint on the CI/CD template
+        run: |
+          pip install cfn-lint
+          cfn-lint deploy/github-oidc.yaml
+
+      - name: sam build
+        run: sam build

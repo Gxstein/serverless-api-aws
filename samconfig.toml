@@ -20,3 +20,13 @@ region = "us-east-1"
 
 [default.local_start_api.parameters]
 warm_containers = "EAGER"
+
+# Used by GitHub Actions: artifacts bucket and CloudFormation role come from deploy/github-oidc.yaml
+[ci.global.parameters]
+stack_name = "serverless-api-aws"
+
+[ci.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+fail_on_empty_changeset = false
+region = "us-east-1"

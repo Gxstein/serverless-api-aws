@@ -1,0 +1,91 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency: deploy-main
+
+jobs:
+  deploy:
+    name: sam deploy + publish frontend
+    # Runs only after the AWS side is configured (see README > CI/CD)
+    if: vars.AWS_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # required to request the OIDC token
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      STACK_NAME: serverless-api-aws
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Run tests before deploying
+        run: |
+          pip install -r tests/requirements.txt
+          pytest -q
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Configure AWS credentials (OIDC, no access keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Build
+        run: sam build
+
+      - name: Deploy stack
+        run: |
+          sam deploy --config-env ci \
+            --region "$AWS_REGION" \
+            --s3-bucket "${{ vars.SAM_ARTIFACTS_BUCKET }}" \
+            --role-arn "${{ vars.CFN_EXECUTION_ROLE_ARN }}" \
+            --parameter-overrides "AlarmEmail=${{ vars.ALARM_EMAIL }} AllowedOrigin=${{ vars.ALLOWED_ORIGIN || '*' }}"
+
+      - name: Read stack outputs
+        id: outputs
+        run: |
+          get_output() {
+            aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+              --query "Stacks[0].Outputs[?OutputKey=='$1'].OutputValue" --output text
+          }
+          {
+            echo "api_url=$(get_output ApiUrl)"
+            echo "bucket=$(get_output FrontendBucketName)"
+            echo "distribution=$(get_output DistributionId)"
+            echo "frontend_url=$(get_output FrontendUrl)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish frontend to S3 and invalidate CloudFront cache
+        env:
+          API_URL: ${{ steps.outputs.outputs.api_url }}
+          BUCKET: ${{ steps.outputs.outputs.bucket }}
+          DISTRIBUTION: ${{ steps.outputs.outputs.distribution }}
+        run: |
+          printf 'window.APP_CONFIG = {\n  apiUrl: "%s",\n};\n' "$API_URL" > frontend/config.js
+          aws s3 sync frontend/ "s3://$BUCKET/" --delete
+          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION" --paths "/*" > /dev/null
+
+      - name: Smoke test
+        env:
+          API_URL: ${{ steps.outputs.outputs.api_url }}
+        run: |
+          curl -fsS "$API_URL/expenses/summary"
+          {
+            echo "### Deploy finished"
+            echo "- API: $API_URL"
+            echo "- Frontend: ${{ steps.outputs.outputs.frontend_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
